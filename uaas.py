@@ -53,8 +53,8 @@ def run_uaas_experiment(args, seed=0):
         D_m = {key: val[D_m_indices] for key, val in exps.items()}
 
         # Compute v_i and update q_i using only D_m
-        v_i = compute_v_i(D_m["value"], D_m["reward"], device)
-        q_i = update_quantile_threshold(q_i, v_i, alpha, eta, device)
+        v_i = compute_v_i(D_m["value"], D_m["reward"])
+        q_i = update_quantile_threshold(q_i, v_i, alpha, eta)
 
         # Update V_phi using D_m
         value_loss = torch.mean(v_i)

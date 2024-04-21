@@ -10,7 +10,6 @@ from tqdm.notebook import tqdm
 from gym_minigrid.envs.doorkey import DoorKeyEnv
 import pandas as pd
 import random
-from sensorimotor_checker import hw2_tests
 from tqdm import tqdm
 
 

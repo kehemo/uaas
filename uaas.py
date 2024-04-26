@@ -86,3 +86,56 @@ def run_uaas_experiment(args, seed=0):
 # Example usage
 # args = Config(max_episodes=1000, lr=0.01, log_interval=100)
 # run_uaas_experiment(args)
+
+
+
+def run_uaas_experiment(args, seed='0'):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    env = DoorKeyEnv5x5()  # Adjust to your specific environment
+    acmodel = ACModel(env.action_space.n, use_critic=True)
+    acmodel.to(device)
+
+    optimizer = torch.optim.Adam(acmodel.parameters(), lr=args.lr)
+
+    pd_logs = []
+    q_j = 0
+
+    for e in tqdm(range(args.max_episodes)):
+        exps, logs = collect_experiences(env, acmodel, args, device)
+        
+        for i, exp in enumerate(exps):
+
+            T = torch.size(exp['actions'])[0]
+
+            for t in range(T):
+                sigma_val = compute_v_i(exp['states'][t:], exp['rewards'][t:])
+                q_j = update_quantile_threshold(q_j, sigma_val, args.alpha, args.eta)
+
+
+                if sigma_val <= q_j:
+                    adjusted_return = exp['rewards'][t] + args.gamma * V  # need to define how V is computed
+                else:
+                    adjusted_return = exp['rewards'][t]
+
+                dists = Categorical(logits=F.log_softmax(acmodel(exp['states'][t]).logits, dim=1))
+                log_prob = dists.log_prob(exp['actions'][t])
+                policy_loss = -log_prob * adjusted_return
+
+                optimizer.zero_grad()
+                policy_loss.backward()
+                optimizer.step()
+
+                logs = {
+                    'epoch': e,
+                    'trajectory_index': i,
+                    'time_step': t,
+                    'quantile_threshold': q_j,
+                    'adjusted_return': adjusted_return,
+                    'policy_loss': policy_loss.item()
+                }
+                pd_logs.append(logs)
+
+    return pd.DataFrame(pd_logs).set_index(['epoch', 'trajectory_index', 'time_step'])

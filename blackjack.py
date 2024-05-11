@@ -1,28 +1,32 @@
 import torch
 import torch.nn as nn
 from torch.distributions.categorical import Categorical
-from dataclasses import dataclass
+import gym
 
-@dataclass
-class Config:
-    """
-    Stores algorithmic hyperparameters.
-    """
+# @dataclass
+# class Config:
+#     """
+#     Stores algorithmic hyperparameters.
+#     """
 
-    score_threshold = 0.93
-    discount = 0.995
-    lr = 1e-6
-    max_grad_norm = 0.5
-    log_interval = 10
-    max_episodes = 40000
-    gae_lambda = 0.95
-    use_critic = False
-    clip_ratio = 0.2
-    target_kl = 0.01
-    train_ac_iters = 5
-    use_discounted_reward = False
-    entropy_coef = 0.01
-    use_gae = False
+#     score_threshold = 0.93
+#     discount = 0.995
+#     lr = 5e-7
+#     max_grad_norm = 0.5
+#     log_interval = 10
+#     max_episodes = 25000
+#     gae_lambda = 0.95
+#     use_critic = False
+#     clip_ratio = 0.2
+#     target_kl = 0.01
+#     train_ac_iters = 5
+#     use_discounted_reward = False
+#     entropy_coef = 0.01
+#     use_gae = False
+
+def make_balckjack_env():
+    env = gym.make('Blackjack-v1', natural=False, sab=False)
+    return env
 
 def preprocess_obss(obss, device=None):
     """

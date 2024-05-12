@@ -195,6 +195,7 @@ def update_parameters_reinforce(optimizer, acmodel, sb, args):
     logps = dist.log_prob(sb["action"])
 
     reward = sb["discounted_reward"] if args.use_discounted_reward else sb["reward"]
+    reward = (reward - reward.mean()) / (reward.std() + 1e-10)
     ##############################################################################################
 
     # computes policy loss

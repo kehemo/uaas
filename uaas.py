@@ -173,3 +173,51 @@ def update_parameters_with_baseline(optimizer, acmodel, sb, args):
     }
 
     return logs
+
+
+def update_parameters_reinforce(optimizer, acmodel, sb, args):
+    """
+    optimizer: Optimizer function used to perform gradient updates to model. torch.optim.Optimizer
+    acmodel: Network used to compute policy. torch.nn.Module
+    sb: stores experience data. Refer to "collect_experiences". dict
+    args: Config arguments. Config
+
+    return output logs : dict
+    """
+
+    # logps is the log probability for taking an action for each time step. Shape (T,)
+    logps, reward = None, None
+
+    ### TODO: compute logps and reward from acmodel, sb['obs'], sb['action'], and sb['reward'] ###
+    ### If args.use_discounted_reward is True, use sb['discounted_reward'] instead. ##############
+    ### (10 pts) #########################################
+    dist, val = acmodel(sb["obs"])
+    logps = dist.log_prob(sb["action"])
+
+    reward = sb["discounted_reward"] if args.use_discounted_reward else sb["reward"]
+    ##############################################################################################
+
+    # computes policy loss
+    policy_loss = compute_policy_loss_reinforce(logps, reward)
+    update_policy_loss = policy_loss.item()
+
+    # Update actor-critic
+    optimizer.zero_grad()
+    policy_loss.backward()
+
+    # Perform gradient clipping for stability
+    for p in acmodel.parameters():
+        if p.grad is None:
+            print(
+                "Make sure you're not instantiating any critic variables when the critic is not used"
+            )
+    update_grad_norm = (
+        sum(p.grad.data.norm(2) ** 2 for p in acmodel.parameters()) ** 0.5
+    )
+    torch.nn.utils.clip_grad_norm_(acmodel.parameters(), args.max_grad_norm)
+    optimizer.step()
+
+    # Log some values
+    logs = {"policy_loss": update_policy_loss, "grad_norm": update_grad_norm}
+
+    return logs

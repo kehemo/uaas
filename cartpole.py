@@ -1,28 +1,47 @@
 from torch import nn
 import torch
 import gym
+from torch.distributions.categorical import Categorical
+
+
 
 
 class Policy(nn.Module):
-    def __init__(self, num_actions):
+    def __init__(self, num_actions, use_critic=True):
         super(Policy, self).__init__()
-        self.state_space = 4
-        self.action_space = num_actions
+        self.use_critic = use_critic
 
-        self.l1 = nn.Linear(self.state_space, 128, bias=False)
-        self.l2 = nn.Linear(128, self.action_space, bias=False)
-
-        # Episode policy and reward history
-        self.reward_episode = []
-        # Overall reward and loss history
-        self.reward_history = []
-        self.loss_history = []
-
-    def forward(self, x):
-        model = nn.Sequential(
-            self.l1, nn.Dropout(p=0.6), nn.ReLU(), self.l2, nn.Softmax(dim=-1)
+        self.common = nn.Sequential(
+            nn.Linear(4, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU()
         )
-        return torch.distributions.Categorical(model(x)), 0
+
+        self.actor = nn.Sequential(
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, num_actions),
+            nn.LogSoftmax(dim=-1)
+        )
+
+        if self.use_critic:
+            self.critic = nn.Sequential(
+                nn.Linear(64, 64),
+                nn.ReLU(),
+                nn.Linear(64, 1)
+            )
+
+    def forward(self, obs):
+        x = self.common(obs)
+        action_probs = self.actor(x)
+
+        if self.use_critic:
+            value = self.critic(x)
+        else:
+            value = torch.zeros((x.shape[0], 1), device=x.device)
+
+        return Categorical(logits=action_probs), value
 
 
 def make_env():

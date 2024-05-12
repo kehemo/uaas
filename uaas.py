@@ -18,7 +18,7 @@ def compute_policy_loss_reinforce(logps, returns):
 
     #### TODO: complete policy loss (10 pts) ###
     # HINT:  Recall, that we want to perform gradient ASCENT to maximize returns
-    policy_loss = -torch.mean(logps * returns)
+    policy_loss = -torch.sum(logps * returns)
     ############################################
 
     return policy_loss
@@ -199,25 +199,13 @@ def update_parameters_reinforce(optimizer, acmodel, sb, args):
 
     # computes policy loss
     policy_loss = compute_policy_loss_reinforce(logps, reward)
-    update_policy_loss = policy_loss.item()
 
     # Update actor-critic
     optimizer.zero_grad()
     policy_loss.backward()
-
-    # Perform gradient clipping for stability
-    for p in acmodel.parameters():
-        if p.grad is None:
-            print(
-                "Make sure you're not instantiating any critic variables when the critic is not used"
-            )
-    update_grad_norm = (
-        sum(p.grad.data.norm(2) ** 2 for p in acmodel.parameters()) ** 0.5
-    )
-    torch.nn.utils.clip_grad_norm_(acmodel.parameters(), args.max_grad_norm)
     optimizer.step()
 
     # Log some values
-    logs = {"policy_loss": update_policy_loss, "grad_norm": update_grad_norm}
+    logs = {"policy_loss": update_policy_loss}
 
     return logs

@@ -76,6 +76,7 @@ class UAASParameterUpdate:
         indices = []
         for x in score[1:]:
             s = x.item()
+            self.j += 1
             self.q_j += self.step_size() * ((1 if self.q_j <= s else 0) - self.alpha)
             indices.append(1 if self.q_j <= s else 0)
         indices.append(0)

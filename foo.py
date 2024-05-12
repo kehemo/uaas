@@ -26,6 +26,7 @@ class Config:
     entropy_coef: float = 0.01
     use_gae: bool = False
     smooth_reward_window: int = 50
+    max_frames_per_ep: int = 500
 
 
 def compute_advantage_gae(values, rewards, T, gae_lambda, discount):
@@ -116,14 +117,13 @@ def collect_experiences(env, acmodel, preprocess_obss, args, device=None):
         reward, policy loss, value loss, etc.
     """
 
-    MAX_FRAMES_PER_EP = 300
-    shape = (MAX_FRAMES_PER_EP,)
+    shape = (args.max_frames_per_ep,)
 
     actions = torch.zeros(*shape, device=device, dtype=torch.int)
     values = torch.zeros(*shape, device=device)
     rewards = torch.zeros(*shape, device=device)
     log_probs = torch.zeros(*shape, device=device)
-    obss = [None] * MAX_FRAMES_PER_EP
+    obss = [None] * args.max_frames_per_ep
 
     obs, _ = env.reset()
 
@@ -156,7 +156,7 @@ def collect_experiences(env, acmodel, preprocess_obss, args, device=None):
         total_return += reward
         T += 1
 
-        if done or T >= MAX_FRAMES_PER_EP - 1:
+        if done or T >= args.max_frames_per_ep - 1:
             break
 
     discounted_reward = compute_discounted_return(rewards[:T], args.discount, device)

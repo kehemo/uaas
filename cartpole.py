@@ -22,7 +22,7 @@ class Policy(nn.Module):
         model = nn.Sequential(
             self.l1, nn.Dropout(p=0.6), nn.ReLU(), self.l2, nn.Softmax(dim=-1)
         )
-        return model(x)
+        return nn.Categorical(model(x)), None
 
 
 def make_env():

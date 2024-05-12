@@ -206,6 +206,6 @@ def update_parameters_reinforce(optimizer, acmodel, sb, args):
     optimizer.step()
 
     # Log some values
-    logs = {"policy_loss": update_policy_loss}
+    logs = {"policy_loss": policy_loss.item()}
 
     return logs

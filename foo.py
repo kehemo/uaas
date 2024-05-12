@@ -138,8 +138,9 @@ def collect_experiences(env, acmodel, preprocess_obss, args, device=None):
 
         with torch.no_grad():
             dist, value = acmodel(preprocessed_obs)
-        action_probs = torch.softmax(dist.logits, dim=-1)
-        action = torch.tensor(0 if (action_probs[0] > action_probs[1]) else 1)
+        # action_probs = torch.softmax(dist.logits, dim=-1)
+        # action = torch.tensor(0 if (action_probs[0] > action_probs[1]) else 1)
+        action = dist.sample()[0]
 
         obss[T] = obs
         # update environment from taken action. We use the resulting observation,

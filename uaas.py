@@ -1,141 +1,175 @@
 import torch
-import numpy as np
-from .foo import *
-from torch.distributions import Categorical
-from tqdm import tqdm
 
 
-def compute_v_i(values, rewards):
-    """Compute the squared difference from estimated values and actual rewards"""
-    return (values - rewards) ** 2
+def compute_policy_loss_reinforce(logps, returns):
+    """
+    Function for computing the policy loss for the REINFORCE algorithm. See
+    4.2 of lecture notes.
+
+                logps: log probabilities for each time step. Shape: (T,)
+                returns: total return for each time step. Shape: (T,)
+
+    ----
+    return : tensor.float Shape: [T,]
+
+             policy loss for each timestep
+    """
+    policy_loss = torch.tensor(0)
+
+    #### TODO: complete policy loss (10 pts) ###
+    # HINT:  Recall, that we want to perform gradient ASCENT to maximize returns
+    policy_loss = -torch.mean(logps * returns)
+    ############################################
+
+    return policy_loss
 
 
-def update_quantile_threshold(q_prev, v_i, alpha, eta):
-    """Update the quantile threshold for filtering trajectories"""
-    condition = (v_i >= q_prev).float()
-    return q_prev + eta * (condition - alpha)
+def compute_policy_loss_with_baseline(logps, advantages):
+    """
+    Computes policy loss with added baseline term. Refer to 4.3 in Lecture Notes.
+    logps:  computed log probabilities. shape (T,)
+    advantages: computed advantages. shape: (T,)
+
+    ---
+
+    return policy loss computed with baseline term: tensor.float. Shape (,1)
+
+           refer to 4.3- Baseline in lecture notes
+
+    """
+    policy_loss = 0
+
+    ### TODO: implement the policy loss (5 pts) ##############
+    policy_loss = compute_policy_loss_reinforce(logps, advantages)
+    ##################################################
+
+    return policy_loss
 
 
-def softclip(R, target_R):
-    """Implement soft clipping logic here based on your specific requirements"""
-    return torch.clamp(R, min=target_R)
+class UAASParameterUpdate:
+    def __init__(self, alpha, epsilon):
+        self.q_j = 0
+        self.j = 1
+        self.alpha = alpha
+        self.epsilon = epsilon
 
+    def step_size(self):
+        return self.j ** (-0.5 + self.epsilon)
 
-def run_uaas_experiment(args, seed=0):
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    def __call__(self, optimizer, acmodel, sb, args):
+        """
+        optimizer: Optimizer function used to perform gradient updates to model. torch.optim.Optimizer
+        acmodel: Network used to compute policy. torch.nn.Module
+        sb: stores experience data. Refer to "collect_experiences". dict
+        args: Config arguments. Config
 
-    env = DoorKeyEnv5x5()
-    acmodel = ACModel(env.action_space.n, use_critic=True)
-    acmodel.to(device)
-    optimizer = torch.optim.Adam(acmodel.parameters(), lr=args.lr)
+        return output logs : dict
+        """
+        dist, vals = acmodel(sb["obs"])
+        logps = dist.log_prob(sb["action"])
+        val_nograd = sb["value"]
+        reward = sb["discounted_reward"]
+        val_t1 = torch.roll(val_nograd, shifts=-1, dims=0)
+        val_t1[-1] = 0
+        reduced_reward = sb["reward"] + args.discount * val_t1
+        score = (val_nograd - reward) * (val_nograd - reward)
+        indices = []
+        for x in score[1:]:
+            s = x.item()
+            self.q_j += self.step_size() * ((1 if self.q_j <= s else 0) - self.alpha)
+            indices.append(1 if self.q_j <= s else 0)
+        indices.append(0)
+        reward_prime = torch.stack([reward, reduced_reward])[indices]
+        advantage = reward_prime - val_nograd
+        # computes policy loss
+        policy_loss = compute_policy_loss_with_baseline(logps, advantage)
+        update_policy_loss = policy_loss.item()
 
-    alpha = 0.1  # Adjust this parameter as needed for the quantile update
-    eta = 0.01  # Learning rate for quantile threshold update
+        value_loss = torch.norm(reward - vals, p=2)
+        update_value_loss = value_loss.item()
 
-    q_i = torch.tensor(0.0, device=device)  # Initial quantile threshold
+        loss = value_loss + policy_loss
 
-    for episode in tqdm(range(args.max_episodes)):
-        # Step 1: Collect trajectories
-        exps, logs = collect_experiences(env, acmodel, args, device)
-
-        # Split data into two subsets D_n and D_m
-        num_data = exps["obs"].size(0)
-        indices = torch.randperm(num_data).to(device)
-
-        # Assuming you want to split 50-50 or adjust the ratio as needed
-        split_point = round(num_data * 0.5)
-        D_n_indices = indices[:split_point]
-        D_m_indices = indices[split_point:]
-
-        D_n = {key: val[D_n_indices] for key, val in exps.items()}
-        D_m = {key: val[D_m_indices] for key, val in exps.items()}
-
-        # Compute v_i and update q_i using only D_m
-        v_i = compute_v_i(D_m["value"], D_m["reward"])
-        q_i = update_quantile_threshold(q_i, v_i, alpha, eta)
-
-        # Update V_phi using D_m
-        value_loss = torch.mean(v_i)
+        # Update actor-critic
         optimizer.zero_grad()
-        value_loss.backward()
-        optimizer.step()
+        loss.backward()
 
-        # Compute adjusted rewards R'^gamma
-        R_gamma = D_n["reward"]  # Assuming you've computed discounted rewards
-        adjusted_rewards = torch.where(
-            v_i <= q_i, R_gamma, softclip(R_gamma, D_n["reward"], episode)
+        # Perform gradient clipping for stability
+        update_grad_norm = (
+            sum(p.grad.data.norm(2) ** 2 for p in acmodel.parameters()) ** 0.5
         )
-
-        # Compute policy gradient and update policy
-        dists = Categorical(logits=F.log_softmax(acmodel(D_n["obs"]).logits, dim=1))
-        log_probs = dists.log_prob(D_n["action"])
-        policy_loss = -torch.mean(log_probs * adjusted_rewards)
-
-        optimizer.zero_grad()
-        policy_loss.backward()
+        torch.nn.utils.clip_grad_norm_(acmodel.parameters(), args.max_grad_norm)
         optimizer.step()
 
-        if episode % args.log_interval == 0:
-            print(f"Episode {episode}: Loss = {policy_loss.item()}")
+        # Log some values
+        logs = {
+            "policy_loss": update_policy_loss,
+            "grad_norm": update_grad_norm,
+            "value_loss": update_value_loss,
+        }
 
-    print("Experiment completed.")
-
-
-# Example usage
-# args = Config(max_episodes=1000, lr=0.01, log_interval=100)
-# run_uaas_experiment(args)
-
+        return logs
 
 
-def run_uaas_experiment(args, seed='0'):
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def update_parameters_with_baseline(optimizer, acmodel, sb, args):
+    """
+    Updates model parameters using value and policy functions
 
-    env = DoorKeyEnv5x5()  # Adjust to your specific environment
-    acmodel = ACModel(env.action_space.n, use_critic=True)
-    acmodel.to(device)
+    optimizer: Optimizer function used to perform gradient updates to model. torch.optim.Optimizer
+    acmodel: Network used to compute policy. torch.nn.Module
+    sb: stores experience data. Refer to "collect_experiences". dict
+    args: Config arguments
+    """
 
-    optimizer = torch.optim.Adam(acmodel.parameters(), lr=args.lr)
+    def _compute_value_loss(values, returns):
+        """
+        Computes the value loss of critic model. See 4.3 of Lecture Notes
 
-    pd_logs = []
-    q_j = 0
-
-    for e in tqdm(range(args.max_episodes)):
-        exps, logs = collect_experiences(env, acmodel, args, device)
-        
-        for i, exp in enumerate(exps):
-
-            T = torch.size(exp['actions'])[0]
-
-            for t in range(T):
-                sigma_val = compute_v_i(exp['states'][t:], exp['rewards'][t:])
-                q_j = update_quantile_threshold(q_j, sigma_val, args.alpha, args.eta)
+        values: computed values from critic model shape: (T,)
+        returns: discounted rewards. shape: (T,)
 
 
-                if sigma_val <= q_j:
-                    adjusted_return = exp['rewards'][t] + args.gamma * V  # need to define how V is computed
-                else:
-                    adjusted_return = exp['rewards'][t]
+        ---
+        computes loss of value function. See 4.3, eq. 11 in lecture notes : tensor.float. Shape (,1)
+        """
 
-                dists = Categorical(logits=F.log_softmax(acmodel(exp['states'][t]).logits, dim=1))
-                log_prob = dists.log_prob(exp['actions'][t])
-                policy_loss = -log_prob * adjusted_return
+        value_loss = 0
 
-                optimizer.zero_grad()
-                policy_loss.backward()
-                optimizer.step()
+        ### TODO: implement the value loss (5 pts) ###############
+        value_loss = torch.norm(returns - values, p=2)
+        ##################################################
 
-                logs = {
-                    'epoch': e,
-                    'trajectory_index': i,
-                    'time_step': t,
-                    'quantile_threshold': q_j,
-                    'adjusted_return': adjusted_return,
-                    'policy_loss': policy_loss.item()
-                }
-                pd_logs.append(logs)
+        return value_loss
 
-    return pd.DataFrame(pd_logs).set_index(['epoch', 'trajectory_index', 'time_step'])
+    logps, advantage, values, reward = None, None, None, None
+
+    dist, values = acmodel(sb["obs"])
+    logps = dist.log_prob(sb["action"])
+    advantage = sb["advantage_gae"] if args.use_gae else sb["advantage"]
+    reward = sb["discounted_reward"]
+
+    policy_loss = compute_policy_loss_with_baseline(logps, advantage)
+    value_loss = _compute_value_loss(values, reward)
+    loss = policy_loss + value_loss
+
+    update_policy_loss = policy_loss.item()
+    update_value_loss = value_loss.item()
+
+    # Update actor-critic
+    optimizer.zero_grad()
+    loss.backward()
+    update_grad_norm = (
+        sum(p.grad.data.norm(2) ** 2 for p in acmodel.parameters()) ** 0.5
+    )
+    torch.nn.utils.clip_grad_norm_(acmodel.parameters(), args.max_grad_norm)
+    optimizer.step()
+
+    # Log some values
+
+    logs = {
+        "policy_loss": update_policy_loss,
+        "value_loss": update_value_loss,
+        "grad_norm": update_grad_norm,
+    }
+
+    return logs
